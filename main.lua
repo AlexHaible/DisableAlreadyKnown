@@ -59,12 +59,16 @@ hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
     local numItems = GetMerchantNumItems()
 
     for i = 1, MERCHANT_ITEMS_PER_PAGE do
-        local itemButton = _G["MerchantItem" .. i]
-        if itemButton then
-            itemButton:Enable()
-            itemButton.icon:SetDesaturated(false)
-            itemButton:SetAlpha(1)
-            local name = _G[itemButton:GetName() .. "Name"]
+        local itemContainer = _G["MerchantItem" .. i]
+        if itemContainer then
+            local itemButton = _G["MerchantItem" .. i .. "ItemButton"]
+            if itemButton then
+                itemButton:Enable()
+                itemButton.icon:SetDesaturated(false)
+                itemButton:SetAlpha(1)
+            end
+
+            local name = _G[itemContainer:GetName() .. "Name"]
             name:SetTextColor(1, 1, 1)
         end
     end
@@ -74,13 +78,13 @@ hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
             local itemLink = GetMerchantItemLink(i)
             if itemLink and IsItemKnown(itemLink) then
                 local index = i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE
-                local itemButton = _G["MerchantItem" .. index]
+                local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
                 if itemButton then
-                    local name = _G[itemButton:GetName() .. "Name"]
                     itemButton.icon:SetDesaturated(true)
                     itemButton:SetAlpha(0.5)
-                    name:SetTextColor(0.5, 0.5, 0.5)
                     itemButton:Disable()
+                    local name = _G["MerchantItem" .. index .. "Name"]
+                    name:SetTextColor(0.5, 0.5, 0.5)
                 end
             end
         end
@@ -105,14 +109,20 @@ hooksecurefunc("MerchantItemButton_OnClick", function(self, button, ...)
 end)
 
 -- === Tooltip hint for override ===
-GameTooltip:HookScript("OnTooltipSetItem", function(tooltip)
-    local name, link = tooltip:GetItem()
-    if not link then return end
-    if not HideKnownVendorItemsDB.hideKnown then return end
-    if not IsItemKnown(link) then return end
+local f = CreateFrame("Frame")
+f:RegisterEvent("PLAYER_LOGIN")
+f:SetScript("OnEvent", function()
+    if GameTooltip and GameTooltip.HookScript then
+        GameTooltip:HookScript("OnTooltipSetItem", function(tooltip)
+            local name, link = tooltip:GetItem()
+            if not link then return end
+            if not HideKnownVendorItemsDB.hideKnown then return end
+            if not IsItemKnown(link) then return end
 
-    tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"), 0.7, 0.7, 0.7, true)
-    tooltip:Show()
+            tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"), 0.7, 0.7, 0.7, true)
+            tooltip:Show()
+        end)
+    end
 end)
 
 -- === Slash command ===
