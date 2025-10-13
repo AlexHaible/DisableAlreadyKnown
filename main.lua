@@ -8,21 +8,41 @@ HideKnownVendorItemsDB = HideKnownVendorItemsDB or { hideKnown = false }
 local IsItemKnown
 
 ---------------------------------------------------------
--- Known item detection
+-- Smart known-item detection (auto-localized)
 ---------------------------------------------------------
-IsItemKnown = function(itemLink)
+local KNOWN_STR = _G.ITEM_SPELL_KNOWN or "Already known"
+
+local function IsItemKnown(itemLink)
     if not itemLink then return false end
 
     local tooltipData = C_TooltipInfo.GetHyperlink(itemLink)
     if not tooltipData or not tooltipData.lines then return false end
 
-    local searchStr = HideKnownVendorItems_GetLocaleString("ALREADY_KNOWN")
+    local matched = false
+
     for _, line in ipairs(tooltipData.lines) do
-        if line.leftText and line.leftText:find(searchStr) then
-            return true
+        -- Only process real tooltip text lines (type 0)
+        if line.type == 0 and line.leftText then
+            local text = line.leftText:lower()
+
+            if text:find(KNOWN_STR:lower(), 1, true) then
+                matched = true
+                break
+            end
         end
     end
-    return false
+
+    -- Cancel out known false-positives (uncollected ensembles, ATT lines, etc.)
+    if matched then
+        for _, line in ipairs(tooltipData.lines) do
+            local t = line.leftText and line.leftText:lower() or ""
+            if t:find("uncollected") or t:find("not collected") then
+                return false
+            end
+        end
+    end
+
+    return matched
 end
 
 ---------------------------------------------------------

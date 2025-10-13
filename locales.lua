@@ -1,7 +1,6 @@
 HideKnownVendorItems_Locales = {
     ["enUS"] = {
         ADDON_TITLE = "Hide Known Vendor Items",
-        ALREADY_KNOWN = "Already known",
         CHECKBOX_LABEL = "Hide Known",
         CHECKBOX_TOOLTIP = "Gray out and block known recipes, pets, and mounts.",
         ERROR_KNOWN = "You already know this item!",
@@ -17,7 +16,6 @@ HideKnownVendorItems_Locales = {
 
     ["deDE"] = {
         ADDON_TITLE = "Bekannte Händlersachen ausblenden",
-        ALREADY_KNOWN = "Bereits bekannt",
         CHECKBOX_LABEL = "Bekannte ausblenden",
         CHECKBOX_TOOLTIP = "Blendet bekannte Rezepte, Haustiere und Reittiere aus.",
         ERROR_KNOWN = "Ihr kennt diesen Gegenstand bereits!",
@@ -33,7 +31,6 @@ HideKnownVendorItems_Locales = {
 
     ["frFR"] = {
         ADDON_TITLE = "Masquer les objets connus des marchands",
-        ALREADY_KNOWN = "Déjà connu",
         CHECKBOX_LABEL = "Masquer connus",
         CHECKBOX_TOOLTIP = "Grise et bloque les recettes, familiers et montures déjà connus.",
         ERROR_KNOWN = "Vous connaissez déjà cet objet !",
@@ -49,7 +46,6 @@ HideKnownVendorItems_Locales = {
 
     ["esES"] = {
         ADDON_TITLE = "Ocultar objetos conocidos del vendedor",
-        ALREADY_KNOWN = "Ya conocido",
         CHECKBOX_LABEL = "Ocultar conocidos",
         CHECKBOX_TOOLTIP = "Atenúa y bloquea recetas, mascotas y monturas ya conocidas.",
         ERROR_KNOWN = "¡Ya conoces este objeto!",
@@ -65,7 +61,6 @@ HideKnownVendorItems_Locales = {
 
     ["esMX"] = {
         ADDON_TITLE = "Ocultar objetos conocidos del vendedor",
-        ALREADY_KNOWN = "Ya conocido",
         CHECKBOX_LABEL = "Ocultar conocidos",
         CHECKBOX_TOOLTIP = "Resalta y bloquea las recetas, mascotas y monturas que ya conoces.",
         ERROR_KNOWN = "¡Ya conoces este objeto!",
@@ -81,7 +76,6 @@ HideKnownVendorItems_Locales = {
 
     ["itIT"] = {
         ADDON_TITLE = "Nascondi oggetti già conosciuti dal venditore",
-        ALREADY_KNOWN = "Già conosciuto",
         CHECKBOX_LABEL = "Nascondi conosciuti",
         CHECKBOX_TOOLTIP = "Disattiva e blocca ricette, mascotte e cavalcature già conosciute.",
         ERROR_KNOWN = "Conosci già questo oggetto!",
@@ -97,7 +91,6 @@ HideKnownVendorItems_Locales = {
 
     ["ptBR"] = {
         ADDON_TITLE = "Ocultar itens conhecidos do vendedor",
-        ALREADY_KNOWN = "Já conhecido",
         CHECKBOX_LABEL = "Ocultar conhecidos",
         CHECKBOX_TOOLTIP = "Apaga e bloqueia receitas, mascotes e montarias já conhecidas.",
         ERROR_KNOWN = "Você já conhece este item!",
@@ -113,7 +106,6 @@ HideKnownVendorItems_Locales = {
 
     ["ruRU"] = {
         ADDON_TITLE = "Скрыть известные предметы у продавца",
-        ALREADY_KNOWN = "Уже известно",
         CHECKBOX_LABEL = "Скрыть известные",
         CHECKBOX_TOOLTIP = "Затемняет и блокирует уже изученные рецепты, питомцев и маунтов.",
         ERROR_KNOWN = "Вы уже знаете этот предмет!",
@@ -129,7 +121,6 @@ HideKnownVendorItems_Locales = {
 
     ["koKR"] = {
         ADDON_TITLE = "상인에게서 이미 배운 아이템 숨기기",
-        ALREADY_KNOWN = "이미 배움",
         CHECKBOX_LABEL = "이미 배운 것 숨기기",
         CHECKBOX_TOOLTIP = "이미 배운 제작법, 애완동물, 탈것을 회색 처리하고 차단합니다.",
         ERROR_KNOWN = "이미 배운 아이템입니다!",
@@ -145,7 +136,6 @@ HideKnownVendorItems_Locales = {
 
     ["zhCN"] = {
         ADDON_TITLE = "隐藏已学会的商人物品",
-        ALREADY_KNOWN = "已学会",
         CHECKBOX_LABEL = "隐藏已学会",
         CHECKBOX_TOOLTIP = "灰显并阻止已学会的配方、宠物和坐骑。",
         ERROR_KNOWN = "你已经学会该物品！",
@@ -161,7 +151,6 @@ HideKnownVendorItems_Locales = {
 
     ["zhTW"] = {
         ADDON_TITLE = "隱藏已學會的商人物品",
-        ALREADY_KNOWN = "已學會",
         CHECKBOX_LABEL = "隱藏已學會",
         CHECKBOX_TOOLTIP = "將已學會的配方、寵物和坐騎變灰並加以封鎖。",
         ERROR_KNOWN = "你已經學會此物品！",
