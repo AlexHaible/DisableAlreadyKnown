@@ -1,12 +1,33 @@
 local addonName = ...
 local frame = CreateFrame("Frame")
 local vendorCheckbox
+local initialized = false
 HideKnownVendorItemsDB = HideKnownVendorItemsDB or { hideKnown = false }
 
 -- === Forward declarations ===
 local IsItemKnown
 
--- === Checkbox on vendor frame ===
+---------------------------------------------------------
+-- Known item detection
+---------------------------------------------------------
+IsItemKnown = function(itemLink)
+    if not itemLink then return false end
+
+    local tooltipData = C_TooltipInfo.GetHyperlink(itemLink)
+    if not tooltipData or not tooltipData.lines then return false end
+
+    local searchStr = HideKnownVendorItems_GetLocaleString("ALREADY_KNOWN")
+    for _, line in ipairs(tooltipData.lines) do
+        if line.leftText and line.leftText:find(searchStr) then
+            return true
+        end
+    end
+    return false
+end
+
+---------------------------------------------------------
+-- Checkbox on vendor frame
+---------------------------------------------------------
 local function CreateVendorCheckbox()
     if vendorCheckbox then return end
 
@@ -18,15 +39,14 @@ local function CreateVendorCheckbox()
     vendorCheckbox.tooltip = tooltip
     vendorCheckbox:SetChecked(HideKnownVendorItemsDB.hideKnown)
 
-    -- Smart positioning that respects Blizzard’s filter dropdown
-    local anchorFrame = MerchantFrameLootFilter or MerchantNameText
-
+    -- Anchor in blank space between portrait and dropdown
     vendorCheckbox:ClearAllPoints()
-    if anchorFrame and anchorFrame:IsShown() then
-        vendorCheckbox:SetPoint("TOPRIGHT", anchorFrame, "BOTTOMRIGHT", 0, -6)
-    else
-        vendorCheckbox:SetPoint("TOPRIGHT", MerchantFrame, "TOPRIGHT", -42, -52)
-    end
+    vendorCheckbox:SetPoint("TOPLEFT", MerchantFrame, "TOPLEFT", 55, -25)
+
+    vendorCheckbox.text:ClearAllPoints()
+    vendorCheckbox.text:SetPoint("LEFT", vendorCheckbox, "RIGHT", 2, 0)
+    vendorCheckbox.text:SetWidth(110)
+    vendorCheckbox.text:SetJustifyH("LEFT")
 
     vendorCheckbox:HookScript("OnClick", function(self)
         HideKnownVendorItemsDB.hideKnown = self:GetChecked()
@@ -34,25 +54,9 @@ local function CreateVendorCheckbox()
     end)
 end
 
-
--- === Known item detection ===
-IsItemKnown = function(itemLink)
-    if not itemLink then return false end
-
-    local tooltipData = C_TooltipInfo.GetHyperlink(itemLink)
-    if not tooltipData or not tooltipData.lines then return false end
-
-    local searchStr = HideKnownVendorItems_GetLocaleString("ALREADY_KNOWN")
-
-    for _, line in ipairs(tooltipData.lines) do
-        if line.leftText and line.leftText:find(searchStr) then
-            return true
-        end
-    end
-    return false
-end
-
--- === Main vendor update hook ===
+---------------------------------------------------------
+-- Vendor item refresh
+---------------------------------------------------------
 hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
     if not vendorCheckbox then
         CreateVendorCheckbox()
@@ -61,61 +65,65 @@ hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
     local active = HideKnownVendorItemsDB.hideKnown
     local numItems = GetMerchantNumItems()
 
+    -- Reset visuals
     for i = 1, MERCHANT_ITEMS_PER_PAGE do
         local itemContainer = _G["MerchantItem" .. i]
         if itemContainer then
             local itemButton = _G["MerchantItem" .. i .. "ItemButton"]
             if itemButton then
+                itemButton.__HIDEKNOWN_LOCKED = nil
                 itemButton:Enable()
                 itemButton.icon:SetDesaturated(false)
                 itemButton:SetAlpha(1)
             end
-
             local name = _G[itemContainer:GetName() .. "Name"]
             name:SetTextColor(1, 1, 1)
         end
     end
 
-    if active then
-        for i = 1, numItems do
-            local itemLink = GetMerchantItemLink(i)
-            if itemLink and IsItemKnown(itemLink) then
-                local index = i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE
-                local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
-                if itemButton then
-                    itemButton:SetMouseClickEnabled(true)
-                    itemButton:SetAlpha(0.5)
-                    itemButton.icon:SetDesaturated(true)
-                    itemButton.__HIDEKNOWN_LOCKED = true
-                    local name = _G["MerchantItem" .. index .. "Name"]
-                    name:SetTextColor(0.5, 0.5, 0.5)
-                end
+    if not active then return end
+
+    for i = 1, numItems do
+        local itemLink = GetMerchantItemLink(i)
+        if itemLink and IsItemKnown(itemLink) then
+            local index = math.max(1, i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE)
+            local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
+            if itemButton then
+                itemButton:SetMouseClickEnabled(true)
+                itemButton:SetAlpha(0.5)
+                itemButton.icon:SetDesaturated(true)
+                itemButton.__HIDEKNOWN_LOCKED = true
+                local name = _G["MerchantItem" .. index .. "Name"]
+                name:SetTextColor(0.5, 0.5, 0.5)
             end
         end
     end
 end)
 
--- === Click hook with Shift+Right override ===
+---------------------------------------------------------
+-- Merchant click feedback
+---------------------------------------------------------
 local function HookMerchantButtons()
     for i = 1, MERCHANT_ITEMS_PER_PAGE do
-        local btn = _G["MerchantItem"..i.."ItemButton"]
+        local btn = _G["MerchantItem" .. i .. "ItemButton"]
         if btn and not btn.__HideKnownHooked then
             btn.__HideKnownHooked = true
+
             btn:HookScript("OnClick", function(self, button)
                 if not HideKnownVendorItemsDB.hideKnown then return end
                 if not self.__HIDEKNOWN_LOCKED then return end
 
                 if IsShiftKeyDown() and button == "RightButton" then
-                    UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"), 0.5, 1, 0.5)
-                    self.__HIDEKNOWN_LOCKED = nil -- one-time override
+                    UIErrorsFrame:AddMessage(
+                        HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"),
+                        0.5, 1, 0.5)
+                    self.__HIDEKNOWN_LOCKED = nil
                     return
                 end
 
-                UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"), 1, 0, 0)
-                PlaySound(SOUNDKIT.IG_PLAYER_INVITE_DECLINE, "Master")
-                -- Prevent Blizzard from processing this click
-                self:SetPropagateKeyboardInput(false)
-                self:SetPropagateMouseClicks(false)
+                UIErrorsFrame:AddMessage(
+                    HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"),
+                    1, 0, 0)
             end)
         end
     end
@@ -123,19 +131,22 @@ end
 
 hooksecurefunc("MerchantFrame_UpdateMerchantInfo", HookMerchantButtons)
 
--- === Tooltip hint for override ===
+---------------------------------------------------------
+-- Tooltip hint for override
+---------------------------------------------------------
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
     if not GameTooltip then return end
     local ok = pcall(function()
         GameTooltip:HookScript("OnTooltipSetItem", function(tooltip)
-            local name, link = tooltip:GetItem()
+            local _, link = tooltip:GetItem()
             if not link then return end
             if not HideKnownVendorItemsDB.hideKnown then return end
             if not IsItemKnown(link) then return end
 
-            tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"), 0.7, 0.7, 0.7, true)
+            tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"),
+                0.7, 0.7, 0.7, true)
             tooltip:Show()
         end)
     end)
@@ -143,10 +154,16 @@ f:SetScript("OnEvent", function()
     if not ok then
         print("|cffff6600HideKnownVendorItems:|r Skipped GameTooltip hook (OnTooltipSetItem unavailable).")
     end
+
+    -- Edge case: reload while vendor is open
+    if MerchantFrame and MerchantFrame:IsShown() then
+        MerchantFrame_UpdateMerchantInfo()
+    end
 end)
 
-
--- === Slash command ===
+---------------------------------------------------------
+-- Slash command
+---------------------------------------------------------
 SLASH_HIDEKNOWN1 = "/hideknown"
 SlashCmdList["HIDEKNOWN"] = function(msg)
     msg = msg and msg:lower() or ""
@@ -174,9 +191,11 @@ SlashCmdList["HIDEKNOWN"] = function(msg)
     MerchantFrame_UpdateMerchantInfo()
 end
 
--- === Modern Settings API Panel (simple, safe version) ===
+---------------------------------------------------------
+-- Modern Settings Panel
+---------------------------------------------------------
 local function CreateSettingsPanel()
-    local categoryName = "Hide Known Vendor Items"
+    local categoryName = HideKnownVendorItems_GetLocaleString("ADDON_TITLE")
     local panel = CreateFrame("Frame")
     panel.name = categoryName
 
@@ -198,9 +217,9 @@ local function CreateSettingsPanel()
     end)
 
 --@debug@
-    -------------------------------------------------------------------------
-    -- Debug-only: add translation coverage info for developers/testers
-    -------------------------------------------------------------------------
+    -----------------------------------------------------
+    -- Debug-only: translation coverage info
+    -----------------------------------------------------
     local base = HideKnownVendorItems_Locales["enUS"]
     local baseCount = 0
     for _ in pairs(base) do baseCount = baseCount + 1 end
@@ -226,15 +245,21 @@ local function CreateSettingsPanel()
     end
 --@end-debug@
 
-    -- Register the panel with Blizzard Settings UI (modern way)
     local category = Settings.RegisterCanvasLayoutCategory(panel, categoryName)
     Settings.RegisterAddOnCategory(category)
 end
 
-CreateSettingsPanel()
-
--- === Initialization ===
+---------------------------------------------------------
+-- Initialization
+---------------------------------------------------------
+frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("MERCHANT_SHOW")
-frame:SetScript("OnEvent", function()
-    CreateVendorCheckbox()
+frame:SetScript("OnEvent", function(_, event, arg1)
+    if event == "ADDON_LOADED" and arg1 == addonName and not initialized then
+        initialized = true
+        HideKnownVendorItemsDB = HideKnownVendorItemsDB or { hideKnown = false }
+        CreateSettingsPanel()
+    elseif event == "MERCHANT_SHOW" then
+        CreateVendorCheckbox()
+    end
 end)
