@@ -1,0 +1,31 @@
+## Interface: 110205, 110207
+## Title: Hide Known Vendor Items
+## Notes: Grays out known vendor items, prevents accidental purchases, supports multiple languages.
+## Author: Sauravisus (Xirastrasza - Argent Dawn EU, Horde)
+## Version: @project-version@
+## X-Date: @project-date-iso@
+## X-Curse-Project-ID: 646799
+## SavedVariables: HideKnownVendorItemsDB
+
+## Category-enUS: Other
+## Category-deDE: Anderes
+## Category-esES: Otros
+## Category-esMX: Otros
+## Category-frFR: Autre
+## Category-itIT: Altro
+## Category-koKR: 기타
+## Category-ptBR: Outro
+## Category-ruRU: Другое
+## Category-zhCN: 其它
+## Category-zhTW: 其他
+
+#@alpha@
+## OptionalDeps: BugSack, BugGrabber
+#@end-alpha@
+
+locales.lua
+main.lua
+
+#@debug@
+## Version: DEV
+#@end-debug@
