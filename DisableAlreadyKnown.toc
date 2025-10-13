@@ -4,7 +4,7 @@
 ## Author: Sauravisus (Xirastrasza - Argent Dawn EU, Horde)
 ## Version: @project-version@
 ## X-Date: @project-date-iso@
-## X-Curse-Project-ID: 646799
+## X-Curse-Project-ID: 1364251
 ## SavedVariables: HideKnownVendorItemsDB
 
 ## Category-enUS: Other
