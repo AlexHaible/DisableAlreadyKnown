@@ -54,8 +54,7 @@ local function CreateVendorCheckbox()
 end
 
 ---------------------------------------------------------
--- Modern reliable known-item detection (no scanner)
--- Returns: true/false, or nil if the item data isn't cached yet
+-- Modern reliable known-item detection (includes pets)
 ---------------------------------------------------------
 local function IsItemKnown(itemLink)
     if not itemLink then
@@ -63,13 +62,12 @@ local function IsItemKnown(itemLink)
         return false
     end
 
-    local itemID = GetItemInfoInstant(itemLink)
+    local itemID = C_Item.GetItemInfoInstant(itemLink)
     if not itemID then
         --@debug@ HKVI_Log("IsItemKnown: no itemID for", itemLink) --@end-debug@
         return false
     end
 
-    -- Explicitly request load (non-blocking)
     if C_Item and not C_Item.IsItemDataCachedByID(itemID) then
         C_Item.RequestLoadItemDataByID(itemID)
         --@debug@ HKVI_LogOnce(itemLink, "Item data not yet cached") --@end-debug@
@@ -83,23 +81,39 @@ local function IsItemKnown(itemLink)
     end
 
     local knownStr = (ITEM_SPELL_KNOWN or "Already known"):lower()
-    local foundKnown, foundUncollected = false, false
+    local foundKnown, foundUncollected, foundCollectedPet = false, false, false
 
     for _, line in ipairs(tooltipData.lines) do
         if line.leftText then
             local text = line.leftText:lower()
-            if text:find("uncollected", 1, true) or text:find("not collected", 1, true) or text:find("unlearned", 1, true) then
+
+            -- detect false positives
+            if text:find("uncollected", 1, true)
+            or text:find("not collected", 1, true)
+            or text:find("unlearned", 1, true) then
                 foundUncollected = true
-            elseif text:find(knownStr, 1, true) then
+            end
+
+            -- detect standard "Already known"
+            if text:find(knownStr, 1, true) then
                 foundKnown = true
+            end
+
+            -- detect pet collections like "Collected (1/3)"
+            local countStr = text:match("collected%s*%((%d+)%s*/%s*(%d+)%)")
+            if countStr then
+                local owned = tonumber(countStr)
+                if owned and owned > 0 then
+                    foundCollectedPet = true
+                end
             end
         end
     end
 
-    local res = (foundKnown and not foundUncollected) or false
+    local res = ((foundKnown or foundCollectedPet) and not foundUncollected) or false
     --@debug@
     HKVI_LogOnce(itemLink, "IsItemKnown ->", res and "true" or "false",
-        "(known:", foundKnown, "uncollected:", foundUncollected, ")")
+        "(known:", foundKnown, "pet:", foundCollectedPet, "uncollected:", foundUncollected, ")")
     --@end-debug@
     return res
 end
