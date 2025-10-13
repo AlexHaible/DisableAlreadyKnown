@@ -7,43 +7,22 @@ HideKnownVendorItemsDB = HideKnownVendorItemsDB or { hideKnown = false }
 -- === Forward declarations ===
 local IsItemKnown
 
----------------------------------------------------------
--- Smart known-item detection (auto-localized)
----------------------------------------------------------
-local KNOWN_STR = _G.ITEM_SPELL_KNOWN or "Already known"
-
-local function IsItemKnown(itemLink)
-    if not itemLink then return false end
-
-    local tooltipData = C_TooltipInfo.GetHyperlink(itemLink)
-    if not tooltipData or not tooltipData.lines then return false end
-
-    local matched = false
-
-    for _, line in ipairs(tooltipData.lines) do
-        -- Only process real tooltip text lines (type 0)
-        if line.type == 0 and line.leftText then
-            local text = line.leftText:lower()
-
-            if text:find(KNOWN_STR:lower(), 1, true) then
-                matched = true
-                break
-            end
-        end
-    end
-
-    -- Cancel out known false-positives (uncollected ensembles, ATT lines, etc.)
-    if matched then
-        for _, line in ipairs(tooltipData.lines) do
-            local t = line.leftText and line.leftText:lower() or ""
-            if t:find("uncollected") or t:find("not collected") then
-                return false
-            end
-        end
-    end
-
-    return matched
+--@debug@
+-- ==== Debug controls =========================================================
+local HKVI_DBG = false
+local function HKVI_Log(...)
+    if HKVI_DBG then print("|cffffcc00HKVI:|r", ...) end
 end
+-- rate-limit protection: prints once per link per refresh
+local hkvi_seen = {}
+local function HKVI_LogOnce(link, ...)
+    if not HKVI_DBG or not link then return end
+    if not hkvi_seen[link] then
+        hkvi_seen[link] = true
+        print("|cffffcc00HKVI:|r", ...)
+    end
+end
+--@end-debug@
 
 ---------------------------------------------------------
 -- Checkbox on vendor frame
@@ -75,15 +54,74 @@ local function CreateVendorCheckbox()
 end
 
 ---------------------------------------------------------
--- Vendor item refresh
+-- Modern reliable known-item detection (no scanner)
+-- Returns: true/false, or nil if the item data isn't cached yet
 ---------------------------------------------------------
-hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
-    if not vendorCheckbox then
-        CreateVendorCheckbox()
+local function IsItemKnown(itemLink)
+    if not itemLink then
+        --@debug@ HKVI_Log("IsItemKnown: no link") --@end-debug@
+        return false
     end
+
+    local itemID = GetItemInfoInstant(itemLink)
+    if not itemID then
+        --@debug@ HKVI_Log("IsItemKnown: no itemID for", itemLink) --@end-debug@
+        return false
+    end
+
+    -- Explicitly request load (non-blocking)
+    if C_Item and not C_Item.IsItemDataCachedByID(itemID) then
+        C_Item.RequestLoadItemDataByID(itemID)
+        --@debug@ HKVI_LogOnce(itemLink, "Item data not yet cached") --@end-debug@
+        return nil
+    end
+
+    local tooltipData = C_TooltipInfo.GetHyperlink(itemLink)
+    if not tooltipData or not tooltipData.lines then
+        --@debug@ HKVI_LogOnce(itemLink, "TooltipInfo missing lines") --@end-debug@
+        return nil
+    end
+
+    local knownStr = (ITEM_SPELL_KNOWN or "Already known"):lower()
+    local foundKnown, foundUncollected = false, false
+
+    for _, line in ipairs(tooltipData.lines) do
+        if line.leftText then
+            local text = line.leftText:lower()
+            if text:find("uncollected", 1, true) or text:find("not collected", 1, true) or text:find("unlearned", 1, true) then
+                foundUncollected = true
+            elseif text:find(knownStr, 1, true) then
+                foundKnown = true
+            end
+        end
+    end
+
+    local res = (foundKnown and not foundUncollected) or false
+    --@debug@
+    HKVI_LogOnce(itemLink, "IsItemKnown ->", res and "true" or "false",
+        "(known:", foundKnown, "uncollected:", foundUncollected, ")")
+    --@end-debug@
+    return res
+end
+
+---------------------------------------------------------
+-- Vendor item refresh (with one-shot async retry)
+---------------------------------------------------------
+local retryScheduled = false
+--@debug@ local hkvi_lastRefreshPrint = 0 --@end-debug@
+
+local function RefreshMerchantItems()
+    --@debug@
+    hkvi_seen = {}
+    if GetTime() - (hkvi_lastRefreshPrint or 0) > 0.5 then
+        HKVI_Log("RefreshMerchantItems start")
+        hkvi_lastRefreshPrint = GetTime()
+    end
+    --@end-debug@
 
     local active = HideKnownVendorItemsDB.hideKnown
     local numItems = GetMerchantNumItems()
+    local needsRetry = false
 
     -- Reset visuals
     for i = 1, MERCHANT_ITEMS_PER_PAGE do
@@ -93,35 +131,68 @@ hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
             if itemButton then
                 itemButton.__HIDEKNOWN_LOCKED = nil
                 itemButton:Enable()
-                itemButton.icon:SetDesaturated(false)
+                if itemButton.icon then
+                    itemButton.icon:SetDesaturated(false)
+                end
                 itemButton:SetAlpha(1)
             end
-            local name = _G[itemContainer:GetName() .. "Name"]
-            name:SetTextColor(1, 1, 1)
+            local nameFS = _G[itemContainer:GetName() .. "Name"]
+            if nameFS then nameFS:SetTextColor(1, 1, 1) end
         end
     end
 
-    if not active then return end
+    if not active then
+        --@debug@ HKVI_Log("Feature disabled, returning.") --@end-debug@
+        return
+    end
 
     for i = 1, numItems do
         local itemLink = GetMerchantItemLink(i)
-        if itemLink and IsItemKnown(itemLink) then
-            local index = math.max(1, i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE)
-            local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
-            if itemButton then
-                itemButton:SetMouseClickEnabled(true)
-                itemButton:SetAlpha(0.5)
-                itemButton.icon:SetDesaturated(true)
-                itemButton.__HIDEKNOWN_LOCKED = true
-                local name = _G["MerchantItem" .. index .. "Name"]
-                name:SetTextColor(0.5, 0.5, 0.5)
+        if itemLink then
+            local index = i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE
+            if index >= 1 and index <= MERCHANT_ITEMS_PER_PAGE then
+                local known = IsItemKnown(itemLink)
+
+                if known == nil then
+                    --@debug@ HKVI_Log("Item not ready:", itemLink) --@end-debug@
+                    needsRetry = true
+
+                elseif known == true then
+                    local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
+                    if itemButton then
+                        if itemButton.icon then itemButton.icon:SetDesaturated(true) end
+                        itemButton:SetAlpha(0.5)
+                        itemButton.__HIDEKNOWN_LOCKED = true
+                        local nameFS = _G["MerchantItem" .. index .. "Name"]
+                        if nameFS then nameFS:SetTextColor(0.5, 0.5, 0.5) end
+                        --@debug@ HKVI_Log("Grayed out:", itemLink) --@end-debug@
+                    end
+                else
+                    --@debug@ HKVI_Log("Not known:", itemLink) --@end-debug@
+                end
             end
+        else
+            needsRetry = true
         end
     end
+
+    if needsRetry and not retryScheduled then
+        retryScheduled = true
+        --@debug@ HKVI_Log("Scheduling one retry in 0.3s") --@end-debug@
+        C_Timer.After(0.3, function()
+            retryScheduled = false
+            MerchantFrame_UpdateMerchantInfo()
+        end)
+    end
+end
+
+hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
+    -- Defer a hair so merchant data/links settle
+    C_Timer.After(0.05, RefreshMerchantItems)
 end)
 
 ---------------------------------------------------------
--- Merchant click feedback
+-- Merchant click feedback (no blocking, just feedback + override)
 ---------------------------------------------------------
 local function HookMerchantButtons()
     for i = 1, MERCHANT_ITEMS_PER_PAGE do
@@ -134,16 +205,12 @@ local function HookMerchantButtons()
                 if not self.__HIDEKNOWN_LOCKED then return end
 
                 if IsShiftKeyDown() and button == "RightButton" then
-                    UIErrorsFrame:AddMessage(
-                        HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"),
-                        0.5, 1, 0.5)
+                    UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"), 0.5, 1, 0.5)
                     self.__HIDEKNOWN_LOCKED = nil
                     return
                 end
 
-                UIErrorsFrame:AddMessage(
-                    HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"),
-                    1, 0, 0)
+                UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"), 1, 0, 0)
             end)
         end
     end
@@ -152,34 +219,30 @@ end
 hooksecurefunc("MerchantFrame_UpdateMerchantInfo", HookMerchantButtons)
 
 ---------------------------------------------------------
--- Tooltip hint for override
+-- Tooltip hint for override (modern, no OnTooltipSetItem)
 ---------------------------------------------------------
-local f = CreateFrame("Frame")
-f:RegisterEvent("PLAYER_LOGIN")
-f:SetScript("OnEvent", function()
-    if not GameTooltip then return end
-    local ok = pcall(function()
-        GameTooltip:HookScript("OnTooltipSetItem", function(tooltip)
-            local _, link = tooltip:GetItem()
-            if not link then return end
-            if not HideKnownVendorItemsDB.hideKnown then return end
-            if not IsItemKnown(link) then return end
+local function TryAddOverrideHint(tooltip)
+    -- Some tooltips (e.g. ShoppingTooltip1) don't have GetItem
+    if type(tooltip.GetItem) ~= "function" then return end
 
-            tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"),
-                0.7, 0.7, 0.7, true)
-            tooltip:Show()
-        end)
-    end)
+    local _, link = tooltip:GetItem()
+    if not link then return end
+    if not HideKnownVendorItemsDB.hideKnown then return end
 
-    if not ok then
-        print("|cffff6600HideKnownVendorItems:|r Skipped GameTooltip hook (OnTooltipSetItem unavailable).")
+    local known = IsItemKnown(link)
+    if known == true then
+        tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"), 0.7, 0.7, 0.7, true)
+        tooltip:Show()
     end
+end
 
-    -- Edge case: reload while vendor is open
-    if MerchantFrame and MerchantFrame:IsShown() then
-        MerchantFrame_UpdateMerchantInfo()
-    end
-end)
+-- Prefer modern TooltipDataProcessor; fallback to SetHyperlink/SetMerchantItem hooks
+if TooltipDataProcessor and Enum and Enum.TooltipDataType and TooltipDataProcessor.AddTooltipPostCall then
+    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, TryAddOverrideHint)
+else
+    hooksecurefunc(GameTooltip, "SetHyperlink", TryAddOverrideHint)
+    hooksecurefunc(GameTooltip, "SetMerchantItem", TryAddOverrideHint)
+end
 
 ---------------------------------------------------------
 -- Slash command
@@ -210,6 +273,39 @@ SlashCmdList["HIDEKNOWN"] = function(msg)
     end
     MerchantFrame_UpdateMerchantInfo()
 end
+
+--@debug@
+-- /hkvidbg -> toggle debug
+SLASH_HKVIDBG1 = "/hkvidbg"
+SlashCmdList["HKVIDBG"] = function()
+    HKVI_DBG = not HKVI_DBG
+    print("|cffffcc00HKVI:|r Debug is now", HKVI_DBG and "|cff20ff20ON|r" or "|cffff2020OFF|r")
+end
+
+-- /hkvidump <slot> -> dump tooltip lines for the merchant slot (1..MERCHANT_ITEMS_PER_PAGE)
+SLASH_HKVIDUMP1 = "/hkvidump"
+SlashCmdList["HKVIDUMP"] = function(msg)
+    local idx = tonumber(msg)
+    if not idx then
+        print("|cffffcc00HKVI:|r Usage: /hkvidump <slot 1-"..(MERCHANT_ITEMS_PER_PAGE or 10)..">")
+        return
+    end
+    local link = GetMerchantItemLink((MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE + idx)
+    if not link then
+        print("|cffffcc00HKVI:|r No link for slot", idx)
+        return
+    end
+    print("|cffffcc00HKVI:|r Dump for slot", idx, link)
+    local tip = C_TooltipInfo.GetHyperlink(link)
+    if not tip or not tip.lines then
+        print("|cffffcc00HKVI:|r (no tooltip data)")
+        return
+    end
+    for i, line in ipairs(tip.lines) do
+        print(i, line.leftText or "")
+    end
+end
+--@end-debug@
 
 ---------------------------------------------------------
 -- Modern Settings Panel
@@ -281,5 +377,9 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         CreateSettingsPanel()
     elseif event == "MERCHANT_SHOW" then
         CreateVendorCheckbox()
+        -- Kick one refresh a tick later to ensure item info is cached
+        C_Timer.After(0.05, function()
+            MerchantFrame_UpdateMerchantInfo()
+        end)
     end
 end)
