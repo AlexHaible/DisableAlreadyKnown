@@ -18,11 +18,14 @@ local function CreateVendorCheckbox()
     vendorCheckbox.tooltip = tooltip
     vendorCheckbox:SetChecked(HideKnownVendorItemsDB.hideKnown)
 
-    -- Smart positioning:
-    if MerchantFrameLootFilter and MerchantFrameLootFilter:IsShown() then
-        vendorCheckbox:SetPoint("TOPRIGHT", MerchantFrameLootFilter, "BOTTOMRIGHT", 0, -4)
+    -- Smart positioning that respects Blizzard’s filter dropdown
+    local anchorFrame = MerchantFrameLootFilter or MerchantNameText
+
+    vendorCheckbox:ClearAllPoints()
+    if anchorFrame and anchorFrame:IsShown() then
+        vendorCheckbox:SetPoint("TOPRIGHT", anchorFrame, "BOTTOMRIGHT", 0, -6)
     else
-        vendorCheckbox:SetPoint("TOPRIGHT", MerchantFrame, "TOPRIGHT", -40, -40)
+        vendorCheckbox:SetPoint("TOPRIGHT", MerchantFrame, "TOPRIGHT", -42, -52)
     end
 
     vendorCheckbox:HookScript("OnClick", function(self)
@@ -80,9 +83,10 @@ hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
                 local index = i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE
                 local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
                 if itemButton then
-                    itemButton.icon:SetDesaturated(true)
+                    itemButton:SetMouseClickEnabled(true)
                     itemButton:SetAlpha(0.5)
-                    itemButton:Disable()
+                    itemButton.icon:SetDesaturated(true)
+                    itemButton.__HIDEKNOWN_LOCKED = true
                     local name = _G["MerchantItem" .. index .. "Name"]
                     name:SetTextColor(0.5, 0.5, 0.5)
                 end
@@ -92,27 +96,39 @@ hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
 end)
 
 -- === Click hook with Shift+Right override ===
-hooksecurefunc("MerchantItemButton_OnClick", function(self, button, ...)
-    if not HideKnownVendorItemsDB.hideKnown then return end
-    local index = (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE + self:GetID()
-    local link = GetMerchantItemLink(index)
-    if not link or not IsItemKnown(link) then return end
+local function HookMerchantButtons()
+    for i = 1, MERCHANT_ITEMS_PER_PAGE do
+        local btn = _G["MerchantItem"..i.."ItemButton"]
+        if btn and not btn.__HideKnownHooked then
+            btn.__HideKnownHooked = true
+            btn:HookScript("OnClick", function(self, button)
+                if not HideKnownVendorItemsDB.hideKnown then return end
+                if not self.__HIDEKNOWN_LOCKED then return end
 
-    if IsShiftKeyDown() and button == "RightButton" then
-        UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"), 0.5, 1, 0.5)
-        return
+                if IsShiftKeyDown() and button == "RightButton" then
+                    UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"), 0.5, 1, 0.5)
+                    self.__HIDEKNOWN_LOCKED = nil -- one-time override
+                    return
+                end
+
+                UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"), 1, 0, 0)
+                PlaySound(SOUNDKIT.IG_PLAYER_INVITE_DECLINE, "Master")
+                -- Prevent Blizzard from processing this click
+                self:SetPropagateKeyboardInput(false)
+                self:SetPropagateMouseClicks(false)
+            end)
+        end
     end
+end
 
-    UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"), 1, 0, 0)
-    PlaySound(SOUNDKIT.IG_PLAYER_INVITE_DECLINE)
-    return
-end)
+hooksecurefunc("MerchantFrame_UpdateMerchantInfo", HookMerchantButtons)
 
 -- === Tooltip hint for override ===
 local f = CreateFrame("Frame")
 f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function()
-    if GameTooltip and GameTooltip.HookScript then
+    if not GameTooltip then return end
+    local ok = pcall(function()
         GameTooltip:HookScript("OnTooltipSetItem", function(tooltip)
             local name, link = tooltip:GetItem()
             if not link then return end
@@ -122,8 +138,13 @@ f:SetScript("OnEvent", function()
             tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"), 0.7, 0.7, 0.7, true)
             tooltip:Show()
         end)
+    end)
+
+    if not ok then
+        print("|cffff6600HideKnownVendorItems:|r Skipped GameTooltip hook (OnTooltipSetItem unavailable).")
     end
 end)
+
 
 -- === Slash command ===
 SLASH_HIDEKNOWN1 = "/hideknown"
@@ -153,35 +174,25 @@ SlashCmdList["HIDEKNOWN"] = function(msg)
     MerchantFrame_UpdateMerchantInfo()
 end
 
--- === Modern Settings API Panel (Dragonflight+ compatible) ===
+-- === Modern Settings API Panel (simple, safe version) ===
 local function CreateSettingsPanel()
     local categoryName = "Hide Known Vendor Items"
     local panel = CreateFrame("Frame")
     panel.name = categoryName
 
-    -- Create layout builder
-    local layout = SettingsPanelUtil.CreateSettingsListCategory(categoryName)
-    local category = Settings.RegisterCanvasLayoutCategory(layout, categoryName)
+    -- Title
+    local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText(categoryName)
 
-    -- Create checkbox
-    local settingName = HideKnownVendorItems_GetLocaleString("CHECKBOX_LABEL")
-    local tooltipText = HideKnownVendorItems_GetLocaleString("CHECKBOX_TOOLTIP")
+    -- Checkbox
+    local cb = CreateFrame("CheckButton", nil, panel, "InterfaceOptionsCheckButtonTemplate")
+    cb:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -12)
+    cb.Text:SetText(HideKnownVendorItems_GetLocaleString("CHECKBOX_LABEL"))
+    cb.tooltip = HideKnownVendorItems_GetLocaleString("CHECKBOX_TOOLTIP")
+    cb:SetChecked(HideKnownVendorItemsDB.hideKnown)
 
-    -- Create a variable-backed setting
-    local setting = Settings.RegisterAddOnSetting(
-        category,
-        settingName,
-        "HideKnownVendorItemsDB",
-        "hideKnown",
-        type(HideKnownVendorItemsDB.hideKnown),
-        HideKnownVendorItemsDB.hideKnown
-    )
-
-    -- Create control checkbox
-    local control = Settings.CreateCheckBox(category, setting, settingName, tooltipText)
-
-    -- On setting change
-    control:SetScript("OnClick", function(self)
+    cb:SetScript("OnClick", function(self)
         HideKnownVendorItemsDB.hideKnown = self:GetChecked()
         MerchantFrame_UpdateMerchantInfo()
     end)
@@ -209,21 +220,18 @@ local function CreateSettingsPanel()
     end
 
     if #infoLines > 0 then
-        local info = layout:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        local info = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+        info:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 0, -8)
         info:SetText("Translation coverage — " .. table.concat(infoLines, ", "))
-        layout:AddVerticalSpacing(8)
-        layout:AddWidget(info)
     end
 --@end-debug@
 
-    -- Add the category to the Settings menu
+    -- Register the panel with Blizzard Settings UI (modern way)
+    local category = Settings.RegisterCanvasLayoutCategory(panel, categoryName)
     Settings.RegisterAddOnCategory(category)
-
-    return category
 end
 
 CreateSettingsPanel()
-
 
 -- === Initialization ===
 frame:RegisterEvent("MERCHANT_SHOW")
