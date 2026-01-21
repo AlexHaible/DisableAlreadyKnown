@@ -24,6 +24,23 @@ local function HKVI_LogOnce(link, ...)
 end
 --@end-debug@
 
+local HKVI_FilteredIndices = {}
+local HKVI_FilteredPages = 1
+local HKVI_KnownCache = {}
+local HKVI_KNOWN_STR = (ITEM_SPELL_KNOWN or "Already known"):lower()
+
+---------------------------------------------------------
+-- Sync the "Page X of Y" label with our filtered pages
+---------------------------------------------------------
+local function HKVI_UpdatePageLabel()
+    if not HideKnownVendorItemsDB.hideKnown then return end
+    if not HKVI_FilteredPages then return end
+    if not MerchantPageText then return end
+
+    local page = MerchantFrame.page or 1
+    MerchantPageText:SetText(string.format(MERCHANT_PAGE_NUMBER, page, HKVI_FilteredPages))
+end
+
 ---------------------------------------------------------
 -- Checkbox on vendor frame
 ---------------------------------------------------------
@@ -68,6 +85,11 @@ local function IsItemKnown(itemLink)
         return false
     end
 
+    local cached = HKVI_KnownCache[itemID]
+    if cached ~= nil then
+        return cached
+    end
+
     if C_Item and not C_Item.IsItemDataCachedByID(itemID) then
         C_Item.RequestLoadItemDataByID(itemID)
         --@debug@ HKVI_LogOnce(itemLink, "Item data not yet cached") --@end-debug@
@@ -80,7 +102,6 @@ local function IsItemKnown(itemLink)
         return nil
     end
 
-    local knownStr = (ITEM_SPELL_KNOWN or "Already known"):lower()
     local foundKnown, foundUncollected, foundCollectedPet = false, false, false
 
     for _, line in ipairs(tooltipData.lines) do
@@ -95,7 +116,7 @@ local function IsItemKnown(itemLink)
             end
 
             -- detect standard "Already known"
-            if text:find(knownStr, 1, true) then
+            if text:find(HKVI_KNOWN_STR, 1, true) then
                 foundKnown = true
             end
 
@@ -111,88 +132,153 @@ local function IsItemKnown(itemLink)
     end
 
     local res = ((foundKnown or foundCollectedPet) and not foundUncollected) or false
+    HKVI_KnownCache[itemID] = res
+
     --@debug@
     HKVI_LogOnce(itemLink, "IsItemKnown ->", res and "true" or "false",
         "(known:", foundKnown, "pet:", foundCollectedPet, "uncollected:", foundUncollected, ")")
     --@end-debug@
+
     return res
 end
 
 ---------------------------------------------------------
 -- Vendor item refresh (with one-shot async retry)
 ---------------------------------------------------------
+-- Force a merchant slot (1..MERCHANT_ITEMS_PER_PAGE) to display a specific
+-- vendor index (1..GetMerchantNumItems()).
+local function HKVI_SetMerchantSlot(slot, merchantIndex)
+    local itemFrame = _G["MerchantItem"..slot]
+    if not itemFrame then return end
+
+    local itemButton = _G["MerchantItem"..slot.."ItemButton"]
+    local nameText  = _G[itemFrame:GetName().."Name"]
+    local moneyFrame = _G[itemFrame:GetName().."MoneyFrame"]
+
+    local name, texture, price, quantity, numAvailable, isUsable, extendedCost = C_MerchantFrame.GetItemInfo(merchantIndex)
+    local itemLink = GetMerchantItemLink(merchantIndex)
+
+    itemFrame:Show()
+
+    -- button basics
+    itemButton:SetID(merchantIndex)
+    SetItemButtonTexture(itemButton, texture)
+    SetItemButtonCount(itemButton, quantity)
+    SetItemButtonStock(itemButton, numAvailable)
+
+    -- name
+    if nameText then
+        nameText:SetText(name or "")
+        nameText:SetTextColor(1, 1, 1)
+    end
+
+    -- price
+    if price and price > 0 then
+        moneyFrame:Show()
+        MoneyFrame_Update(moneyFrame, price)
+    else
+        moneyFrame:Hide()
+    end
+
+    -- icon state (we don't gray out anymore)
+    if itemButton.icon then
+        itemButton.icon:SetDesaturated(false)
+    end
+    itemButton:SetAlpha(1)
+
+    -- extended cost indicator (if Blizzard skinned it)
+    local altCurrencyFrame = _G[itemFrame:GetName().."AltCurrencyFrame"]
+    if extendedCost and altCurrencyFrame then
+        altCurrencyFrame:Show()
+        MerchantFrame_UpdateAltCurrency(merchantIndex, altCurrencyFrame)
+    elseif altCurrencyFrame then
+        altCurrencyFrame:Hide()
+    end
+end
+
 local retryScheduled = false
 --@debug@ local hkvi_lastRefreshPrint = 0 --@end-debug@
 
 local function RefreshMerchantItems()
-    --@debug@
     hkvi_seen = {}
-    if GetTime() - (hkvi_lastRefreshPrint or 0) > 0.5 then
-        HKVI_Log("RefreshMerchantItems start")
-        hkvi_lastRefreshPrint = GetTime()
-    end
-    --@end-debug@
 
     local active = HideKnownVendorItemsDB.hideKnown
     local numItems = GetMerchantNumItems()
     local needsRetry = false
 
-    -- Reset visuals
-    for i = 1, MERCHANT_ITEMS_PER_PAGE do
-        local itemContainer = _G["MerchantItem" .. i]
-        if itemContainer then
-            local itemButton = _G["MerchantItem" .. i .. "ItemButton"]
-            if itemButton then
-                itemButton.__HIDEKNOWN_LOCKED = nil
-                itemButton:Enable()
-                if itemButton.icon then
-                    itemButton.icon:SetDesaturated(false)
-                end
-                itemButton:SetAlpha(1)
-            end
-            local nameFS = _G[itemContainer:GetName() .. "Name"]
-            if nameFS then nameFS:SetTextColor(1, 1, 1) end
-        end
-    end
-
+    -- if disabled: just let Blizzard do its normal thing, show all 12
     if not active then
-        --@debug@ HKVI_Log("Feature disabled, returning.") --@end-debug@
+        wipe(HKVI_FilteredIndices)
+        HKVI_FilteredPages = 1
+        for i = 1, MERCHANT_ITEMS_PER_PAGE do
+            local f = _G["MerchantItem"..i]
+            if f then f:Show() end
+        end
+        -- let Blizzard's pagination be visible again
+        HKVI_UpdatePageLabel()  -- this will early-return if not active
         return
     end
+
+    -- 1) rebuild filtered list from scratch
+    wipe(HKVI_FilteredIndices)
 
     for i = 1, numItems do
         local itemLink = GetMerchantItemLink(i)
         if itemLink then
-            local index = i - (MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE
-            if index >= 1 and index <= MERCHANT_ITEMS_PER_PAGE then
-                local known = IsItemKnown(itemLink)
-
-                if known == nil then
-                    --@debug@ HKVI_Log("Item not ready:", itemLink) --@end-debug@
-                    needsRetry = true
-
-                elseif known == true then
-                    local itemButton = _G["MerchantItem" .. index .. "ItemButton"]
-                    if itemButton then
-                        if itemButton.icon then itemButton.icon:SetDesaturated(true) end
-                        itemButton:SetAlpha(0.5)
-                        itemButton.__HIDEKNOWN_LOCKED = true
-                        local nameFS = _G["MerchantItem" .. index .. "Name"]
-                        if nameFS then nameFS:SetTextColor(0.5, 0.5, 0.5) end
-                        --@debug@ HKVI_Log("Grayed out:", itemLink) --@end-debug@
-                    end
-                else
-                    --@debug@ HKVI_Log("Not known:", itemLink) --@end-debug@
-                end
+            local known = IsItemKnown(itemLink)
+            if known == nil then
+                -- not cached yet -> we KEEP it so it can appear later, but we schedule retry
+                needsRetry = true
+                table.insert(HKVI_FilteredIndices, i)
+            elseif known == false then
+                -- show
+                table.insert(HKVI_FilteredIndices, i)
+            else
+                -- known == true -> we don't add it (this is the hide)
             end
         else
+            -- link not ready -> keep and retry
             needsRetry = true
+            table.insert(HKVI_FilteredIndices, i)
         end
     end
 
+    -- 2) compute page count based on filtered list
+    local totalFiltered = #HKVI_FilteredIndices
+    HKVI_FilteredPages = math.max(1, math.ceil(totalFiltered / MERCHANT_ITEMS_PER_PAGE))
+
+    -- clamp merchant frame page to our page count
+    local page = MerchantFrame.page or 1
+    if page > HKVI_FilteredPages then
+        page = HKVI_FilteredPages
+        MerchantFrame.page = page
+    elseif page < 1 then
+        page = 1
+        MerchantFrame.page = page
+    end
+
+    -- 3) render that page
+    local startIndex = (page - 1) * MERCHANT_ITEMS_PER_PAGE + 1
+
+    for slot = 1, MERCHANT_ITEMS_PER_PAGE do
+        local filteredIndex = startIndex + slot - 1
+        local merchantIndex = HKVI_FilteredIndices[filteredIndex]
+        local itemFrame = _G["MerchantItem"..slot]
+
+        if merchantIndex then
+            HKVI_SetMerchantSlot(slot, merchantIndex)
+        else
+            if itemFrame then
+                itemFrame:Hide()
+            end
+        end
+    end
+
+    HKVI_UpdatePageLabel()
+
+    -- 4) schedule retry if needed
     if needsRetry and not retryScheduled then
         retryScheduled = true
-        --@debug@ HKVI_Log("Scheduling one retry in 0.3s") --@end-debug@
         C_Timer.After(0.3, function()
             retryScheduled = false
             MerchantFrame_UpdateMerchantInfo()
@@ -200,63 +286,37 @@ local function RefreshMerchantItems()
     end
 end
 
+-- Keep merchant paging inside our filtered page range
+local function HKVI_ClampPage()
+    if not HideKnownVendorItemsDB.hideKnown then return end
+    if not HKVI_FilteredPages then return end
+    if MerchantFrame.page > HKVI_FilteredPages then
+        MerchantFrame.page = HKVI_FilteredPages
+    elseif MerchantFrame.page < 1 then
+        MerchantFrame.page = 1
+    end
+end
+
+-- Re-run after Blizzard’s pagination update
+hooksecurefunc("MerchantFrame_UpdatePagination", function()
+    HKVI_UpdatePageLabel()
+end)
+
+hooksecurefunc("MerchantPrevPageButton_OnClick", function()
+    HKVI_ClampPage()
+    -- force refresh because we changed page
+    MerchantFrame_UpdateMerchantInfo()
+end)
+
+hooksecurefunc("MerchantNextPageButton_OnClick", function()
+    HKVI_ClampPage()
+    MerchantFrame_UpdateMerchantInfo()
+end)
+
 hooksecurefunc("MerchantFrame_UpdateMerchantInfo", function()
     -- Defer a hair so merchant data/links settle
     C_Timer.After(0.05, RefreshMerchantItems)
 end)
-
----------------------------------------------------------
--- Merchant click feedback (no blocking, just feedback + override)
----------------------------------------------------------
-local function HookMerchantButtons()
-    for i = 1, MERCHANT_ITEMS_PER_PAGE do
-        local btn = _G["MerchantItem" .. i .. "ItemButton"]
-        if btn and not btn.__HideKnownHooked then
-            btn.__HideKnownHooked = true
-
-            btn:HookScript("OnClick", function(self, button)
-                if not HideKnownVendorItemsDB.hideKnown then return end
-                if not self.__HIDEKNOWN_LOCKED then return end
-
-                if IsShiftKeyDown() and button == "RightButton" then
-                    UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_OVERRIDE"), 0.5, 1, 0.5)
-                    self.__HIDEKNOWN_LOCKED = nil
-                    return
-                end
-
-                UIErrorsFrame:AddMessage(HideKnownVendorItems_GetLocaleString("ERROR_KNOWN"), 1, 0, 0)
-            end)
-        end
-    end
-end
-
-hooksecurefunc("MerchantFrame_UpdateMerchantInfo", HookMerchantButtons)
-
----------------------------------------------------------
--- Tooltip hint for override (modern, no OnTooltipSetItem)
----------------------------------------------------------
-local function TryAddOverrideHint(tooltip)
-    -- Some tooltips (e.g. ShoppingTooltip1) don't have GetItem
-    if type(tooltip.GetItem) ~= "function" then return end
-
-    local _, link = tooltip:GetItem()
-    if not link then return end
-    if not HideKnownVendorItemsDB.hideKnown then return end
-
-    local known = IsItemKnown(link)
-    if known == true then
-        tooltip:AddLine(HideKnownVendorItems_GetLocaleString("TOOLTIP_OVERRIDE"), 0.7, 0.7, 0.7, true)
-        tooltip:Show()
-    end
-end
-
--- Prefer modern TooltipDataProcessor; fallback to SetHyperlink/SetMerchantItem hooks
-if TooltipDataProcessor and Enum and Enum.TooltipDataType and TooltipDataProcessor.AddTooltipPostCall then
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, TryAddOverrideHint)
-else
-    hooksecurefunc(GameTooltip, "SetHyperlink", TryAddOverrideHint)
-    hooksecurefunc(GameTooltip, "SetMerchantItem", TryAddOverrideHint)
-end
 
 ---------------------------------------------------------
 -- Slash command
@@ -304,7 +364,14 @@ SlashCmdList["HKVIDUMP"] = function(msg)
         print("|cffffcc00HKVI:|r Usage: /hkvidump <slot 1-"..(MERCHANT_ITEMS_PER_PAGE or 10)..">")
         return
     end
-    local link = GetMerchantItemLink((MerchantFrame.page - 1) * MERCHANT_ITEMS_PER_PAGE + idx)
+    local page = MerchantFrame.page or 1
+    local filteredIndex = (page - 1) * MERCHANT_ITEMS_PER_PAGE + idx
+    local merchantIndex = HKVI_FilteredIndices[filteredIndex]
+    if not merchantIndex then
+        print("|cffffcc00HKVI:|r No filtered item for slot", idx)
+        return
+    end
+    local link = GetMerchantItemLink(merchantIndex)
     if not link then
         print("|cffffcc00HKVI:|r No link for slot", idx)
         return
