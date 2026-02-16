@@ -1,4 +1,5 @@
-## Interface: 110205, 110207, 120000
+## Interface: 120000, 120001
+
 ## Title: Hide Known Vendor Items
 ## Notes: Grays out known vendor items, prevents accidental purchases, supports multiple languages.
 ## Author: Sauravisus (Xirastrasza - Argent Dawn EU, Horde)
