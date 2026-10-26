@@ -1,4 +1,4 @@
-## Interface: 120100, 120105
+## Interface: 120100, 120105, 120107
 
 ## Title: Hide Known Vendor Items
 ## Notes: Grays out known vendor items, prevents accidental purchases, supports multiple languages.
